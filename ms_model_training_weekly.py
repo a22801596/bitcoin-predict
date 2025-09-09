@@ -31,17 +31,60 @@ if not os.path.exists(WEEKLY_CSV):
 df = pd.read_csv(WEEKLY_CSV, index_col="timestamp", parse_dates=True).sort_index()
 
 # 技術指標（以 weekly close 為基礎）
-df["SMA_8"]  = ta.sma(df["close"], length=8)
-df["EMA_8"]  = ta.ema(df["close"], length=8)
+df["SMA_8"] = ta.sma(df["close"], length=8)
+df["EMA_8"] = ta.ema(df["close"], length=8)
 
 bb = ta.bbands(df["close"], length=8)
+
+if bb is None or bb.empty:
+    raise ValueError("Bollinger Bands returned empty. Check pandas_ta installation.")
+
+# 動態抓欄名（不同版本可能為 BBL_8_2.0 / lower / etc.）
+bb_cols = [c.upper() for c in bb.columns]
+def pick_bb(prefix_fallback_idx, prefix):
+    # 先找前綴（BBL/BBM/BBU）
+    for c in bb.columns:
+        if c.upper().startswith(prefix):
+            return c
+    # 找不到就用預設順序：0=lower,1=middle,2=upper
+    return bb.columns[prefix_fallback_idx]
+
+lower_col = pick_bb(0, "BBL")
+mid_col   = pick_bb(1, "BBM")
+upper_col = pick_bb(2, "BBU")
+
 df["BBU"] = bb["BBU_8_2.0"]
 df["BBM"] = bb["BBM_8_2.0"]
 df["BBL"] = bb["BBL_8_2.0"]
 
 macd = ta.macd(df["close"], fast=6, slow=13, signal=5)
-df["MACD"]  = macd["MACD_6_13_5"]
-df["MACDs"] = macd["MACDs_6_13_5"]
+
+if macd is None or macd.empty:
+    raise ValueError("MACD returned empty. Check pandas_ta installation.")
+m_cols_up = [c.upper() for c in macd.columns]
+
+# 動態抓 MACD 主線與訊號線（不同版本可能是 MACD_6_13_5 / MACDs_6_13_5 / MACD / MACDs 等）
+def pick_macd_line():
+    # 主線
+    for pref in ("MACD_", "MACD"):
+        for c in macd.columns:
+            if c.upper().startswith(pref) and not c.upper().startswith("MACDS"):
+                return c
+    return macd.columns[0]
+def pick_macd_signal():
+    # 訊號線
+    for pref in ("MACDS_", "MACDS", "SIGNAL"):
+        for c in macd.columns:
+            if c.upper().startswith(pref):
+                return c
+    # 若沒有明確的訊號欄，退而求其次用第二欄
+    return macd.columns[1] if len(macd.columns) > 1 else macd.columns[0]
+
+macd_line_col   = pick_macd_line()
+signal_line_col = pick_macd_signal()
+
+df["MACD"]  = macd[macd_line_col]
+df["MACDs"] = macd[signal_line_col]
 
 # 以每週 high/low 推算 Fibonacci retracement（週資料）
 hi = df["high"]; lo = df["low"]; diff = (hi - lo).replace(0, np.nan)
